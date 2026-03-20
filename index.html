@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+    <link rel="stylesheet" href="player.css">
+    <script>
+        // Function to extract video ID from YouTube URL
+        function extractVideoId(url) {
+            const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/;
+            const match = url.match(regex);
+            return match ? match[1] : url;
+        }
+        
+        // Get video ID from URL path
+        function getVideoIdFromCurrentUrl() {
+            const currentPath = window.location.pathname;
+            const searchParams = window.location.search;
+            const fullUrl = window.location.href;
+            
+            console.log('Full URL:', fullUrl);
+            console.log('Path:', currentPath);
+            console.log('Search:', searchParams);
+            
+            // Extract from search parameters (proper way)
+            const urlParams = new URLSearchParams(searchParams);
+            const videoUrl = urlParams.get('yt') || urlParams.get('v') || urlParams.get('url') || urlParams.get('video');
+            if (videoUrl) {
+                console.log('Found search parameter:', videoUrl);
+                return extractVideoId(videoUrl);
+            }
+            
+            // Extract from hash parameters (fallback for special URLs)
+            const hashParams = new URLSearchParams(window.location.hash.substring(1));
+            const hashVideoUrl = hashParams.get('yt') || hashParams.get('v') || hashParams.get('url') || hashParams.get('video');
+            if (hashVideoUrl) {
+                console.log('Found hash parameter:', hashVideoUrl);
+                return extractVideoId(hashVideoUrl);
+            }
+            
+            // Default video ID
+            console.log('Using default video ID');
+            return "6K8bwCvA_Qs";
+        }
+        
+        var currentVideoId = getVideoIdFromCurrentUrl();
+        console.log('Extracted Video ID:', currentVideoId);
+        loadVideo(currentVideoId);
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: arial;
+            /* outline: 1px solid greenyellow; */
+        }
+
+        html,
+        body {
+            background: #181818;
+        }
+
+        body {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .container {
+            width: 100%;
+            border-radius: 5px;
+        }
+
+        .video-box {
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-wrap: wrap;
+            padding: 2px;
+        }
+
+        .video-box h1 {
+            font-size: 16px;
+            color: #e1e1e1;
+            opacity: 1;
+            margin-top: 15px;
+            font-weight: 500;
+            letter-spacing: 0.2px;
+        }
+
+        .video-box .video {
+            width: 100%;
+            aspect-ratio: 16/9;
+            margin: 0 auto;
+            background: transparent;
+        }
+
+        @media(min-width:700px) {
+            .container {
+                flex-direction: row;
+                align-items: stretch;
+            }
+
+            .video-box {
+                width: 100%;
+            }
+        }
+
+        .retry-countdown {
+            margin: 10px 0;
+            font-size: 0.9em;
+            color: #ccc;
+        }
+
+        .retry-btn {
+            display: block;
+            margin: 10px auto 0;
+            padding: 8px 16px;
+            background: #f00;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .retry-btn:hover {
+            background: #d00;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="video-box">
+            <div id="video1" class="video"></div>
+            <h1></h1>
+        </div>
+    </div>
+    <script>
+        const lctplayer = {
+    players: {},
+    currentLoadingId: null,
+    $(selector, parent = document) {
+        try {
+            const elements = parent.querySelectorAll(selector);
+            return elements.length === 1 ? elements[0] : elements.length ? elements : null;
+        } catch (error) {
+            console.error("Selector error:", error);
+            return null;
+        }
+    },
+    async init(videoTag, params) {
+        if (!videoTag || !params?.defaultId) {
+            console.error("Invalid parameters for init");
+            return;
+        }
+        if (this.players[videoTag]) {
+            await this.destroyPlayer(videoTag);
+        }
+        this.currentLoadingId = params.defaultId;
+
+        try {
+            this.players[videoTag] = {
+                params,
+                isPlaying: false,
+                playerState: "initializing",
+                initialized: false,
+                TextTimeInterval: null,
+                TimeSliderInterval: null
+            };
+
+            await this.preSetup(videoTag, params);
+            await this.YtSetup(videoTag);
+            if (this.currentLoadingId === params.defaultId) {
+                this.players[videoTag].initialized = true;
+                console.log(`Player ${videoTag} initialized with video ${params.defaultId}`);
+            }
+        } catch (error) {
+            console.error(`Failed to initialize player ${videoTag}:`, error);
+            this.handleLoadError(videoTag);
+        }
+    },
+    async destroyPlayer(videoTag) {
+        const player = this.players[videoTag];
+        if (!player) return;
+
+        console.log(`Destroying player ${videoTag}`);
+        if (player.TextTimeInterval) clearInterval(player.TextTimeInterval);
+        if (player.TimeSliderInterval) clearInterval(player.TimeSliderInterval);
+        if (player.videoTag && player.videoTag.destroy) {
+            try {
+                player.videoTag.destroy();
+            } catch (e) {
+                console.error("Error destroying player:", e);
+            }
+        }
+        const container = document.getElementById(videoTag);
+        if (container) container.innerHTML = '';
+
+        delete this.players[videoTag];
+    },
+  handleLoadError(videoTag) {
+        const container = document.getElementById(videoTag);
+        if (!container) return;
+        container.innerHTML = `
+            <div class="lctplayer-error" style="display:none;">
+                <div class="error-message">
+                    <div class="retry-countdown"></div>
+                    <button class="retry-btn">Connect To Fast Server</button>
+                </div>
+            </div>`;
+        let retryCount = 0;
+        const maxRetries = 7;
+        let countdown = 1;
+        const countdownElement = container.querySelector('.retry-countdown');
+        
+        const startAutoRetry = () => {
+            if (retryCount >= maxRetries) {
+                countdownElement.textContent = "Maximum retries reached";
+                return;
+            }
+
+            const countdownInterval = setInterval(() => {
+                countdown--;
+                countdownElement.textContent = `Retrying in ${countdown} seconds...`;
+                
+                if (countdown <= 0) {
+                    clearInterval(countdownInterval);
+                    performRetry();
+                }
+            }, 1000);
+        };
+        const performRetry = () => {
+            retryCount++;
+            countdown = 5;
+            countdownElement.textContent = `Retrying (attempt ${retryCount}/${maxRetries})...`;
+            
+            this.init(videoTag, this.players[videoTag]?.params || {})
+                .catch(() => {
+                    if (retryCount < maxRetries) {
+                        startAutoRetry();
+                    } else {
+                        countdownElement.textContent = "Maximum retries reached";
+                    }
+                });
+        };
+        container.querySelector('.retry-btn')?.addEventListener('click', () => {
+            countdown = 0; 
+            performRetry();
+        });
+        startAutoRetry();
+    },
+    async preSetup(videoTag, params) {
+        const theme = params.theme || '';
+        const themeClass = theme ? `theme-${theme}` : '';
+        const container = document.getElementById(videoTag);
+        
+        if (!container) {
+            throw new Error(`Container element #${videoTag} not found`);
+        }
+        container.innerHTML = `
+            <div class="lctplayer ${themeClass}">
+                <div class="lctplayer-container">
+                    <span style="background-color: #000000;">
+                        <div></div>
+                        <i class="ti ti-player-play-filled lctplayer-loading"></i>
+                        <div></div>
+                    </span>
+                    <div id="lctplayer-${videoTag}"></div>
+                </div>
+                <div class="lctplayer-controls-box">
+                    <main>
+                        <i class="ti ti-rewind-backward-10"></i>
+                        <i class="ti lctplayer-play-pause-btn ti-player-play-filled"></i>
+                        <i class="ti ti-rewind-forward-10"></i>
+                    </main>
+                    <div class="lctplayer-controls">
+                        <p>00:00</p>
+                        <div>
+                            <span></span>
+                            <input type="range" min="0" max="100" value="0" step="1">
+                        </div>
+                        <p>00:00</p>
+                        <i class="ti ti-settings settingsBtn"></i>
+                        <i class="ti ti-maximize fsBtn"></i>
+                    </div>
+                    <div class="lctplayer-settings-box" style="max-height: 200px; overflow-y: auto;">
+                        <p>Speed<b>1x</b><i class="ti ti-caret-right-filled"></i></p>
+                        <span>     
+                            <label><input type="radio" name="${videoTag}1">0.75x</label>
+                            <label><input type="radio" name="${videoTag}1" checked>1x</label>
+                            <label><input type="radio" name="${videoTag}1">1.25x</label>
+                            <label><input type="radio" name="${videoTag}1">1.5x</label>
+                            <label><input type="radio" name="${videoTag}1">1.75x</label>
+                            <label><input type="radio" name="${videoTag}1">2x</label>
+                        </span>
+                        <p>Quality<b>360p</b><i class="ti ti-caret-right-filled"></i></p>
+                        <span>
+                            <label><input type="radio" name="${videoTag}2" checked>medium</label>
+                        </span>
+                    </div>
+                </div>
+            </div>`;
+         const parent = container.querySelector(".lctplayer-container");
+        if (params.thumbnail) {
+            const thumbnail = params.thumbnail === true ? 
+                `https://img.youtube.com/vi/${params.defaultId}/mqdefault.jpg` : 
+                params.thumbnail === false ? null : params.thumbnail;
+            
+            if (thumbnail) {
+                parent.querySelector("span").style.backgroundImage = `url("${thumbnail}")`;
+                const img = new Image();
+                img.onerror = () => {
+                    parent.querySelector("span").style.backgroundImage = 'none';
+                    parent.querySelector("span").style.backgroundColor = '#000000';
+                };
+                img.src = thumbnail;
+            } else {
+                parent.querySelector("span").style.backgroundImage = 'none';
+                parent.querySelector("span").style.backgroundColor = '#000000';
+            }
+        } else {
+            parent.querySelector("span").style.backgroundImage = 'none';
+            parent.querySelector("span").style.backgroundColor = '#000000';
+        }
+    },
+async YtSetup(videoTag) {
+    const playerData = this.players[videoTag];
+    if (!playerData) {
+        throw new Error(`Player data not found for ${videoTag}`);
+    }
+
+    const playerTagId = `lctplayer-${videoTag}`;
+    const parent = document.querySelector(`#${playerTagId}`)?.closest(".lctplayer");
+    if (!parent) {
+        throw new Error(`Player container not found for ${videoTag}`);
+    }
+    let controlsTimeout = null;
+    playerData.videoTag = new YT.Player(playerTagId, {
+        videoId: playerData.params.defaultId,
+        playerVars: {
+            controls: 0,
+            mute: 0, // Changed to 0 to allow sound (optional, revert to 1 if needed)
+            autoplay: playerData.params.autoplay ? 1 : 0,
+            disablekb: 1,
+            color: "white",
+            fs: 0,
+            playsinline: 1,
+            rel: 0,
+            loop: playerData.params.loop ? 1 : 0,
+            cc_load_policy: 3,
+            showinfo: 0,
+            iv_load_policy: 3,
+        },
+        events: {
+            onReady: () => this.onPlayerReady(videoTag, playerTagId, parent),
+            onError: (event) => this.onPlayerError(videoTag, event)
+        }
+    });
+    const eventHandlers = {
+        backward: () => this.seekVideo(videoTag, -10, parent, controlsTimeout),
+        forward: () => this.seekVideo(videoTag, 10, parent, controlsTimeout),
+        togglePlayPause: () => this.togglePlayPause(videoTag, parent, controlsTimeout),
+        updateSlider: (e) => this.handleSliderUpdate(videoTag, e, parent, controlsTimeout),
+        toggleFullscreen: () => this.toggleFullscreen(parent),
+        toggleSettings: () => this.toggleSettings(videoTag, parent, controlsTimeout)
+    };
+    const iframe = await new Promise((resolve) => {
+        const checkIframe = () => {
+            const iframe = parent.querySelector(".lctplayer-container iframe");
+            if (iframe) {
+                resolve(iframe);
+            } else {
+                setTimeout(checkIframe, 50);
+            }
+        };
+        checkIframe();
+    });
+
+    iframe.addEventListener("load", () => {
+        parent.querySelector(".lctplayer-container span i").classList.remove("lctplayer-loading");
+        parent.querySelector(".lctplayer-controls-box main i:nth-of-type(1)").addEventListener("click", eventHandlers.backward);
+        parent.querySelector(".lctplayer-controls-box main i:nth-of-type(2)").addEventListener("click", eventHandlers.togglePlayPause);
+        parent.querySelector(".lctplayer-controls-box main i:nth-of-type(3)").addEventListener("click", eventHandlers.forward);
+        playerData.TextTimeInterval = setInterval(() => this.updateTextTime(videoTag, parent), 1000);
+        playerData.TimeSliderInterval = setInterval(() => this.updateTimeSlider(videoTag, parent), 1000);
+        parent.querySelector(".lctplayer-controls-box .lctplayer-controls input").addEventListener("input", eventHandlers.updateSlider);
+        parent.querySelector(".lctplayer-controls-box .lctplayer-controls .fsBtn").addEventListener("click", eventHandlers.toggleFullscreen);
+        parent.querySelector(".lctplayer-controls-box .lctplayer-controls .settingsBtn").addEventListener("click", eventHandlers.toggleSettings);
+        const fsBtn = parent.querySelector(".lctplayer-controls-box .lctplayer-controls .fsBtn");
+        fsBtn.style.display = document.fullscreenEnabled ? "block" : "none";
+        if (playerData.params.autoplay) {
+            const playButton = parent.querySelector(".lctplayer-controls-box main .lctplayer-play-pause-btn");
+            if (playButton) {
+                setTimeout(() => {
+                    playButton.click(); // Simulate click on play button
+                }, 0); // Delay to ensure UI is fully rendered
+            } else {
+                console.warn("attempting direct play");
+                playerData.videoTag.playVideo(); // Fallback to direct play
+            }
+        }
+    });
+},
+onPlayerReady(videoTag, playerTagId, parent) {
+    const playerData = this.players[videoTag];
+    if (!playerData) return;
+
+    let controlsTimeout = null;
+
+    this.pauseVideo(playerData.videoTag).then(() => {
+        playerData.videoTag.addEventListener('onStateChange', (event) => 
+            this.onPlayerStateChange(event, videoTag, parent, controlsTimeout));
+        parent.querySelector(".lctplayer-controls-box").onclick = (e) => {
+            if (!e.target.closest("main") && !e.target.closest(".lctplayer-controls") && !e.target.closest(".lctplayer-settings-box")) {
+                const controlsBox = parent.querySelector(".lctplayer-controls-box");
+                if (controlsBox.classList.contains("lctplayer-controls-open")) {
+                    controlsBox.classList.remove("lctplayer-controls-open");
+                    clearTimeout(controlsTimeout);
+                } else {
+                    controlsBox.classList.add("lctplayer-controls-open");
+                    clearTimeout(controlsTimeout);
+                    controlsTimeout = setTimeout(() => {
+                        controlsBox.classList.remove("lctplayer-controls-open");
+                    }, 10000);
+                }
+            }
+        };
+
+        // Automatically trigger play if autoplay is enabled
+        if (playerData.params.autoplay) {
+            const playButton = parent.querySelector(".lctplayer-controls-box main .lctplayer-play-pause-btn");
+            if (playButton) {
+                playButton.click(); // Simulate click on play button
+            }
+        }
+    });
+},
+    onPlayerError(videoTag, event) {
+        console.error(`YouTube Player Error (${event.data}) for video ${videoTag}`);
+        this.handleLoadError(videoTag);
+    },
+    onPlayerStateChange(event, videoTag, parent, controlsTimeout) {
+        const playerData = this.players[videoTag];
+        if (!playerData) return;
+
+        const playPauseBtn = parent.querySelector(".lctplayer-controls-box main .lctplayer-play-pause-btn");
+        const controlsBox = parent.querySelector(".lctplayer-controls-box");
+
+        switch (event.data) {
+            case YT.PlayerState.PLAYING:
+                playerData.isPlaying = true;
+                playerData.playerState = "playing";
+                playPauseBtn.className = "ti lctplayer-play-pause-btn ti-player-pause-filled";
+                parent.querySelector(".lctplayer-container span i").classList.add("lctplayer-loading");
+                parent.querySelector(".lctplayer-container span").style.display = "none";
+                playerData.videoTag.unMute();
+                parent.querySelector(".lctplayer-container").style.pointerEvents = "none";
+                controlsBox.style.display = "flex";
+                controlsBox.classList.remove("lctplayer-controls-open1");
+                clearTimeout(controlsTimeout);
+                controlsTimeout = setTimeout(() => {
+                    controlsBox.classList.remove("lctplayer-controls-open");
+                }, 10000);
+                break;
+
+            case YT.PlayerState.PAUSED:
+                clearTimeout(controlsTimeout);
+                playerData.isPlaying = false;
+                playerData.playerState = "paused";
+                playPauseBtn.className = "ti lctplayer-play-pause-btn ti-player-play-filled";
+                if (!controlsBox.classList.contains("lctplayer-controls-open")) {
+                    controlsBox.classList.add("lctplayer-controls-open");
+                }
+                controlsBox.classList.add("lctplayer-controls-open1");
+                break;
+
+            case YT.PlayerState.BUFFERING:
+                playerData.playerState = "buffering";
+                parent.querySelector(".lctplayer-container span i").classList.add("lctplayer-loading");
+                break;
+
+            case YT.PlayerState.CUED:
+                playerData.playerState = "cued";
+                break;
+
+            case YT.PlayerState.ENDED:
+                if (playerData.params.loop === true || playerData.params.loop === "true") {
+                    playerData.videoTag.seekTo(0);
+                } else {
+                    playerData.videoTag.seekTo(0);
+                    playerData.videoTag.pauseVideo();
+                    playerData.playerState = "ended";
+                }
+                break;
+        }
+
+        try {
+            playerData.videoTag.unloadModule("captions");
+            playerData.videoTag.unloadModule("cc");
+        } catch (exception) {
+            console.error("Error unloading modules:", exception);
+        }
+    },
+    seekVideo(videoTag, seconds, parent, controlsTimeout) {
+        const playerData = this.players[videoTag];
+        if (!playerData?.videoTag) return;
+
+        const currentTime = playerData.videoTag.getCurrentTime();
+        playerData.videoTag.seekTo(Math.max(0, currentTime + seconds), true);
+        
+        this.updateTextTime(videoTag, parent);
+        this.updateTimeSlider(videoTag, parent);
+        
+        clearTimeout(controlsTimeout);
+        controlsTimeout = setTimeout(() => {
+            parent.querySelector(".lctplayer-controls-box").classList.remove("lctplayer-controls-open");
+        }, 10000);
+    },
+    togglePlayPause(videoTag, parent, controlsTimeout) {
+        const playerData = this.players[videoTag];
+        if (!playerData?.videoTag) return;
+
+        if (playerData.isPlaying) {
+            playerData.videoTag.pauseVideo();
+            clearTimeout(controlsTimeout);
+        } else {
+            playerData.videoTag.playVideo();
+            clearTimeout(controlsTimeout);
+            controlsTimeout = setTimeout(() => {
+                parent.querySelector(".lctplayer-controls-box").classList.remove("lctplayer-controls-open");
+            }, 10000);
+        }
+    },
+    formatTime(seconds) {
+        const h = Math.floor(seconds / 3600),
+              m = Math.floor((seconds % 3600) / 60),
+              s = Math.floor(seconds % 60);
+        return h > 0 ? 
+            `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : 
+            `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    },
+    updateTextTime(videoTag, parent) {
+        const playerData = this.players[videoTag];
+        if (!playerData?.videoTag) return;
+
+        try {
+            const currentTime = playerData.videoTag.getCurrentTime();
+            const duration = playerData.videoTag.getDuration();
+            
+            const timeElements = parent.querySelectorAll(".lctplayer-controls-box .lctplayer-controls p");
+            timeElements[0].textContent = this.formatTime(currentTime);
+            timeElements[1].textContent = this.formatTime(duration);
+        } catch (error) {
+            console.error("Error updating time:", error);
+        }
+    },
+    updateTimeSlider(videoTag, parent) {
+        const playerData = this.players[videoTag];
+        if (!playerData?.videoTag) return;
+
+        try {
+            const slider = parent.querySelector(".lctplayer-controls-box .lctplayer-controls input");
+            const currentTime = playerData.videoTag.getCurrentTime();
+            const duration = playerData.videoTag.getDuration();
+            const progress = (currentTime / duration) * 100;
+            const loaded = playerData.videoTag.getVideoLoadedFraction() * 100;
+
+            slider.value = progress;
+            slider.style.background = `linear-gradient(to right, var(--sliderSeekTrackColor) ${progress}%, transparent ${progress}%)`;
+            parent.querySelector(".lctplayer-controls-box .lctplayer-controls div span").style.width = `${loaded}%`;
+        } catch (error) {
+            console.error("Error updating slider:", error);
+        }
+    },
+    handleSliderUpdate(videoTag, event, parent, controlsTimeout) {
+        const playerData = this.players[videoTag];
+        if (!playerData?.videoTag) return;
+
+        clearTimeout(controlsTimeout);
+        const slider = event.target;
+        const duration = playerData.videoTag.getDuration();
+        const progress = slider.value;
+
+        slider.style.background = `linear-gradient(to right, var(--sliderSeekTrackColor) ${progress}%, transparent ${progress}%)`;
+        playerData.videoTag.seekTo((progress / 100) * duration);
+        
+        controlsTimeout = setTimeout(() => {
+            parent.querySelector(".lctplayer-controls-box").classList.remove("lctplayer-controls-open");
+        }, 10000);
+    },
+    toggleFullscreen(parent) {
+        const videoContainer = parent;
+        
+        if (!document.fullscreenElement && document.fullscreenEnabled) {
+            videoContainer.requestFullscreen?.() ||
+            videoContainer.mozRequestFullScreen?.() ||
+            videoContainer.webkitRequestFullscreen?.() ||
+            videoContainer.msRequestFullscreen?.();
+        } else if (document.fullscreenElement && document.fullscreenEnabled) {
+            document.exitFullscreen?.() ||
+            document.mozCancelFullScreen?.() ||
+            document.webkitExitFullscreen?.() ||
+            document.msExitFullscreen?.();
+        } else {
+            console.warn("Fullscreen API not supported in your browser.");
+        }
+    },
+ toggleSettings(videoTag, parent, controlsTimeout) {
+    const playerData = this.players[videoTag];
+    if (!playerData?.videoTag) return;
+
+    const settings = parent.querySelector(".lctplayer-controls-box .lctplayer-settings-box");
+    const targetElement = parent.querySelector(".lctplayer-controls-box");
+    const allowedQualities = {
+        'small': '240p',
+        'medium': '360p',
+        'large': '480p',
+        'hd720': '720p',
+        'auto': 'Auto'
+    };
+
+    try {
+        const qualities = playerData.videoTag.getAvailableQualityLevels();
+        const qualityContainer = settings.querySelector("span:nth-of-type(2)");
+        qualityContainer.innerHTML = '';
+
+        if (!playerData.selectedQuality) {
+            playerData.selectedQuality = qualities.includes('medium') ? 'medium' : qualities[0];
+            playerData.videoTag.setPlaybackQuality(playerData.selectedQuality);
+        }
+
+        qualities.forEach(quality => {
+            if (allowedQualities[quality]) {
+                qualityContainer.innerHTML += `
+                    <label>
+                        <input type="radio" name="${videoTag}2" value="${quality}" ${quality === playerData.selectedQuality ? 'checked' : ''}>
+                        ${allowedQualities[quality]}
+                    </label>`;
+            }
+        });
+
+        settings.querySelector("p:nth-of-type(2) b").textContent = allowedQualities[playerData.selectedQuality] || playerData.selectedQuality;
+    } catch (error) {
+        console.error("Error getting quality levels:", error);
+    }
+
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach(mutation => {
+            if (mutation.attributeName === 'class' && 
+                !targetElement.className.includes("open")) {
+                settings.style.display = "none";
+                this.resetSettings(parent);
+            }
+        });
+    });
+
+    observer.observe(targetElement, { attributes: true, attributeFilter: ['class'] });
+
+    settings.style.display = settings.style.display === "block" ? "none" : "block";
+
+    settings.addEventListener("click", () => {
+        clearTimeout(controlsTimeout);
+        controlsTimeout = setTimeout(() => {
+            parent.querySelector(".lctplayer-controls-box").classList.remove("lctplayer-controls-open");
+        }, 12000);
+    });
+
+    settings.querySelectorAll("p").forEach(pin => {
+        pin.addEventListener("click", () => {
+            settings.querySelectorAll("p").forEach(allPin => {
+                allPin.nextElementSibling.style.maxHeight = "0px";
+            });
+            pin.nextElementSibling.style.maxHeight = "350px";
+        });
+    });
+
+    settings.querySelectorAll("span:nth-of-type(1) input").forEach(input => {
+        input.addEventListener("change", (e) => {
+            const value = e.target.parentElement.textContent.trim().slice(0, -1);
+            settings.querySelector("p:nth-of-type(1) b").textContent = `${value}x`;
+            playerData.videoTag.setPlaybackRate(Number(value));
+        });
+    });
+
+    settings.querySelectorAll("span:nth-of-type(2) input").forEach(input => {
+        input.addEventListener("change", (e) => {
+            const quality = e.target.value;
+            const label = allowedQualities[quality] || quality;
+
+            try {
+                playerData.videoTag.setPlaybackQuality(quality);
+                settings.querySelector("p:nth-of-type(2) b").textContent = label;
+                playerData.selectedQuality = quality;
+
+                settings.querySelectorAll(`input[name="${videoTag}2"]`).forEach(radio => {
+                    radio.checked = radio.value === quality;
+                });
+
+                clearTimeout(controlsTimeout);
+                controlsTimeout = setTimeout(() => {
+                    parent.querySelector(".lctplayer-controls-box").classList.remove("lctplayer-controls-open");
+                }, 12000);
+            } catch (error) {
+                console.error("Error setting quality:", error);
+            }
+        });
+    });
+},
+    //  toggleSettings(videoTag, parent) {
+    //     const playerData = this.players[videoTag];
+    //     if (!playerData?.videoTag) return;
+
+    //     const settings = parent.querySelector(".lctplayer-controls-box .lctplayer-settings-box");
+    //     const targetElement = parent.querySelector(".lctplayer-controls-box");
+    //     const qualityDisplay = settings.querySelector("p:nth-of-type(2) b");
+    //     if (playerData.currentQuality === undefined) {
+    //         try {
+    //             playerData.currentQuality = playerData.videoTag.getPlaybackQuality() || 'auto';
+    //         } catch (e) {
+    //             playerData.currentQuality = 'auto';
+    //         }
+    //     }
+
+    //     const updateQualityUI = (quality) => {
+    //         const qualityLabelMap = {
+    //             'small':'240p',
+    //             'medium': '360p',
+    //             'large': '480p',
+    //             'hd720': '720p',
+    //             'auto': 'Auto'
+    //         };
+    //         const displayLabel = qualityLabelMap[quality] || 'Auto';
+    //         qualityDisplay.textContent = displayLabel;
+    //         playerData.currentQuality = quality;
+    //         const radioButtons = settings.querySelectorAll(`span:nth-of-type(2) input[name="${videoTag}2"]`);
+    //         radioButtons.forEach(radio => {
+    //             radio.checked = (radio.value === quality);
+    //         });
+    //     };
+
+    //     try {
+    //         const qualities = playerData.videoTag.getAvailableQualityLevels();
+    //         const allowedQualities = ['small','medium', 'large', 'hd720']; // Correspond to 360p, 480p, 720p
+    //         const availableQualities = qualities.filter(quality => allowedQualities.includes(quality));
+    //         const qualityContainer = settings.querySelector("span:nth-of-type(2)");
+    //         qualityContainer.innerHTML = '';
+
+    //         const qualityLabelMap = {
+    //             'small':'240p',
+    //             'medium': '360p',
+    //             'large': '480p',
+    //             'hd720': '720p'
+    //         };
+    //         qualityContainer.innerHTML += `<label><input type="radio" name="${videoTag}2" value="auto" ${playerData.currentQuality === 'auto' ? 'checked' : ''}>Auto</label>`;
+    //         availableQualities.forEach(quality => {
+    //             const displayLabel = qualityLabelMap[quality] || quality;
+    //             const isChecked = quality === playerData.currentQuality ? 'checked' : '';
+    //             qualityContainer.innerHTML += `<label><input type="radio" name="${videoTag}2" value="${quality}" ${isChecked}>${displayLabel}</label>`;
+    //         });
+
+    //         updateQualityUI(playerData.currentQuality);
+    //     } catch (error) {
+    //         console.error("Error getting quality levels:", error);
+    //         updateQualityUI('auto');
+    //     }
+
+    //     const observer = new MutationObserver((mutations) => {
+    //         mutations.forEach(mutation => {
+    //             if (mutation.attributeName === 'class' &&
+    //                 !targetElement.className.includes("open")) {
+    //                 settings.style.display = "none";
+    //                 this.resetSettings(parent);
+    //             }
+    //         });
+    //     });
+
+    //     observer.observe(targetElement, { attributes: true, attributeFilter: ['class'] });
+    //     settings.style.display = settings.style.display === "block" ? "none" : "block";
+
+    //     settings.addEventListener("click", () => {
+    //         if (playerData.controlsTimeout) clearTimeout(playerData.controlsTimeout);
+    //         playerData.controlsTimeout = setTimeout(() => {
+    //             parent.querySelector(".lctplayer-controls-box").classList.remove("lctplayer-controls-open");
+    //         }, 10000);
+    //     });
+
+    //     settings.querySelectorAll("p").forEach(pin => {
+    //         pin.addEventListener("click", () => {
+    //             settings.querySelectorAll("p").forEach(allPin => {
+    //                 allPin.nextElementSibling.style.maxHeight = "0px";
+    //             });
+    //             pin.nextElementSibling.style.maxHeight = "350px";
+    //         });
+    //     });
+
+    //     settings.querySelectorAll("span:nth-of-type(1) input").forEach(input => {
+    //         input.addEventListener("change", (e) => {
+    //             const value = e.target.parentElement.textContent.trim().slice(0, -1);
+    //             settings.querySelector("p:nth-of-type(1) b").textContent = `${value}x`;
+    //             playerData.videoTag.setPlaybackRate(Number(value));
+    //         });
+    //     });
+
+    //     settings.querySelectorAll("span:nth-of-type(2) input").forEach(input => {
+    //         input.addEventListener("change", (e) => {
+    //             const value = e.target.value;
+    //             try {
+    //                 if (value === 'auto') {
+    //                     playerData.videoTag.setPlaybackQuality('default');
+    //                 } else {
+    //                     playerData.videoTag.setPlaybackQuality(value);
+    //                 }
+    //                 updateQualityUI(value);
+    //             } catch (error) {
+    //                 console.error("Error setting quality:", error);
+    //                 updateQualityUI('auto');
+    //             }
+    //         });
+    //     });
+    // },
+
+    resetSettings(parent) {
+        const settings = parent.querySelector(".lctplayer-controls-box .lctplayer-settings-box");
+        settings.querySelectorAll("p").forEach(pin => {
+            pin.nextElementSibling.style.maxHeight = "0px";
+        });
+    },
+    pauseVideo(player) {
+        return new Promise((resolve) => {
+            try {
+                player.pauseVideo();
+                resolve('Video paused');
+            } catch (error) {
+                console.error('Error pausing video:', error);
+                resolve();
+            }
+        });
+    },
+    initialized(videoTag) {
+        if (!videoTag) {
+            throw new Error("initialized function must have player id as a parameter.");
+        }
+
+        if (!this.players[videoTag]) {
+            throw new Error(`Player ${videoTag} doesn't exist.`);
+        }
+
+        return this.players[videoTag].initialized;
+    }
+};
+let isTransitioning = false;
+
+async function loadVideo(videoId) {
+    if (isTransitioning || !videoId) return;
+    
+    isTransitioning = true;
+    
+    try {
+        const container = document.getElementById('video1');
+        if (container) {
+            container.innerHTML = `
+                <div class="lctplayer-loading">
+                    <div class="loading-spinner"></div>
+                </div>`;
+        }
+
+        await lctplayer.init("video1", {
+            defaultId: videoId,
+            thumbnail: false,
+            theme: "default",
+            loop: false,
+            autoplay: true
+        });
+        
+    } catch (error) {
+        console.error("", error);
+    } finally {
+        isTransitioning = false;
+    }
+}
+function checkAndReloadVideo() {
+    const newVideoId = currentVideoId;
+    if (newVideoId && newVideoId !== currentVideoId) {
+        loadVideo(newVideoId);
+    }
+}
+
+window.addEventListener("popstate", checkAndReloadVideo);
+window.addEventListener("hashchange", checkAndReloadVideo);
+loadVideo(currentVideoId);
+    </script>
+</body>
+
+</html>
