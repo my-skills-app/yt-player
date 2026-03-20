@@ -345,7 +345,7 @@ async YtSetup(videoTag) {
         videoId: playerData.params.defaultId,
         playerVars: {
             controls: 0,
-            mute: 0, // Changed to 0 to allow sound (optional, revert to 1 if needed)
+            mute: 1, // Mute required for autoplay to work
             autoplay: playerData.params.autoplay ? 1 : 0,
             disablekb: 1,
             color: "white",
@@ -457,9 +457,14 @@ onPlayerReady(videoTag, playerTagId, parent) {
                 playerData.isPlaying = true;
                 playerData.playerState = "playing";
                 playPauseBtn.className = "ti lctplayer-play-pause-btn ti-player-pause-filled";
-                parent.querySelector(".lctplayer-container span i").classList.add("lctplayer-loading");
+                parent.querySelector(".lctplayer-container span i").classList.remove("lctplayer-loading");
                 parent.querySelector(".lctplayer-container span").style.display = "none";
-                playerData.videoTag.unMute();
+                // Unmute after playing starts
+                setTimeout(() => {
+                    if (playerData.videoTag) {
+                        playerData.videoTag.unMute();
+                    }
+                }, 100);
                 parent.querySelector(".lctplayer-container").style.pointerEvents = "none";
                 controlsBox.style.display = "flex";
                 controlsBox.classList.remove("lctplayer-controls-open1");
